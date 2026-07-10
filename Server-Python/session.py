@@ -35,6 +35,7 @@ import logging
 import uuid
 
 from config import AUDIO_QUEUE_MAXSIZE, TRANSCRIPT_QUEUE_MAXSIZE
+from memory import SessionMemory
 from pipeline import AudioReceiver, Dispatcher, ResultSender, STTWorker
 
 logger = logging.getLogger(__name__)
@@ -61,6 +62,7 @@ class ClientSession:
         self._transcript_queue: asyncio.Queue = asyncio.Queue(
             maxsize=TRANSCRIPT_QUEUE_MAXSIZE
         )
+        self._memory: SessionMemory = SessionMemory(self.client_id)
         self._tasks: list[asyncio.Task] = []
 
     # ------------------------------------------------------------------
@@ -126,6 +128,7 @@ class ClientSession:
         dispatcher = Dispatcher(
             transcript_queue=self._transcript_queue,
             client_id=self.client_id,
+            memory=self._memory,
         )
 
         # ── Register handlers in processing order ─────────────────────

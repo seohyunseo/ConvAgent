@@ -199,7 +199,6 @@ class STTWorker:
         )
 
         def request_generator():
-        
             # Subsequent messages: audio chunks from the threading queue
             while not self._stop_event.is_set():
                 try:

@@ -429,7 +429,7 @@ MonoBehaviour:
   webSocketManager: {fileID: 1526280650}
   sampleRate: 16000
   bufferLengthSeconds: 10
-  showAudioLevelDebug: 0
+  showDebug: 0
 --- !u!1 &670002674
 GameObject:
   m_ObjectHideFlags: 0
@@ -1130,6 +1130,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::WebSocketManager
   ip: 127.0.0.1
   port: 8080
+  showDebug: 1
 --- !u!4 &1526280651
 Transform:
   m_ObjectHideFlags: 0

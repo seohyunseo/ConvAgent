@@ -9,6 +9,9 @@ public class WebSocketManager : MonoBehaviour
     [Header("Network Settings")]
     [SerializeField] private string ip = "127.0.0.1";
     [SerializeField] private string port = "8080";
+
+    [Header("Debug")]
+    [SerializeField] private bool showDebug = true;
     private string serverUrl = "";
     
     private WebSocket websocket;
@@ -26,7 +29,7 @@ public class WebSocketManager : MonoBehaviour
         websocket.OnMessage += (bytes) => 
         {
             string jsonText = Encoding.UTF8.GetString(bytes);
-            Debug.Log($"[NetworkManager] Subtitle received from server: {jsonText}");
+            if(showDebug) Debug.Log($"[NetworkManager] Subtitle received from server: {jsonText}");
         };
         
         websocket.OnError += (e) => Debug.LogError($"[NetworkManager] WebSocket Error: {e}");

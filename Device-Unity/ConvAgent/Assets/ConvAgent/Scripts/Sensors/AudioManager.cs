@@ -12,7 +12,7 @@ public class AudioManager : MonoBehaviour
     [SerializeField] private int bufferLengthSeconds = 10;
     
     [Header("Debug")]
-    [SerializeField] private bool showAudioLevelDebug = true;
+    [SerializeField] private bool showDebug = true;
 
     private AudioClip micClip;
     private int lastPosition = 0;
@@ -103,7 +103,7 @@ public class AudioManager : MonoBehaviour
         lastPosition = currentPosition;
         
         // 5. Debugging visualizer
-        if (showAudioLevelDebug)
+        if (showDebug)
         {
             DebugAudioLevel(samples);
         }

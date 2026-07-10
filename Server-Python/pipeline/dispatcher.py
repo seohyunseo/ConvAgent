@@ -3,21 +3,29 @@ pipeline/dispatcher.py
 
 Stage 3 — Dispatcher / Router
 ==============================
-Consumes parsed transcript dicts from ``transcript_queue`` and fans
-them out to one or more registered *handler* coroutines.
+Consumes parsed transcript dicts from ``transcript_queue`` and performs
+three actions for every payload:
+
+    Action A  Send the raw JSON payload to the Unity client immediately
+              (via registered handlers, e.g. ResultSender).
+              This ensures interim results appear in real-time on the headset.
+
+    Action B  Pass the data to ``SessionMemory.add_transcript()``.
+              Only ``isFinal=True`` entries are actually stored (the
+              memory class silently drops interim results).
+
+    Action C  Check if ``len(memory.unprocessed_buffer) >= LLM_TRIGGER_THRESHOLD``.
+              If the threshold is reached, log the context and clear the
+              buffer.  This is the placeholder for the future LLM worker —
+              swap the log statement for a real API call when ready.
 
 Extensibility
 -------------
-This is the designated **interception point** for future processing
-stages.  To add an LLM module, simply register its async handler
-*before* the ResultSender's handler in ``session.py``:
+Additional processing stages (e.g. intent detection, sentiment analysis)
+can be added as handlers:
 
-    dispatcher.register_handler(llm_module.process)   # new stage
-    dispatcher.register_handler(result_sender.send)   # existing stage
-
-Handlers are called **sequentially** in registration order for every
-incoming payload.  A handler that raises an exception is logged and
-skipped; subsequent handlers still run.
+    dispatcher.register_handler(my_module.process)   # ← add before sender
+    dispatcher.register_handler(result_sender.send)
 
 Sentinel Protocol
 -----------------
@@ -25,9 +33,16 @@ A ``None`` value on ``transcript_queue`` signals end-of-stream.
 The Dispatcher exits cleanly when it receives this sentinel.
 """
 
+from __future__ import annotations
+
 import asyncio
 import logging
-from typing import Any, Awaitable, Callable
+from typing import TYPE_CHECKING, Any, Awaitable, Callable
+
+from memory.session_memory import LLM_TRIGGER_THRESHOLD, SessionMemory
+
+if TYPE_CHECKING:
+    pass
 
 logger = logging.getLogger(__name__)
 
@@ -43,15 +58,19 @@ class Dispatcher:
         Source of transcript payload dicts.  ``None`` = end of stream.
     client_id:
         Short identifier used in log messages.
+    memory:
+        The ``SessionMemory`` instance for this client session.
     """
 
     def __init__(
         self,
         transcript_queue: asyncio.Queue,
         client_id: str,
+        memory: SessionMemory,
     ) -> None:
         self._transcript_queue = transcript_queue
         self._client_id = client_id
+        self._memory = memory
         self._handlers: list[TranscriptHandler] = []
 
     # ------------------------------------------------------------------
@@ -95,13 +114,6 @@ class Dispatcher:
                     )
                     break
 
-                # logger.debug(
-                #     f"[{self._client_id}] Dispatcher routing: "
-                #     f"final={payload.get('isFinal')}, "
-                #     f"speaker={payload.get('speakerTag')}, "
-                #     f"text='{payload.get('transcript', '')[:60]}…'"
-                # )
-
                 await self._dispatch(payload)
 
         except asyncio.CancelledError:
@@ -119,7 +131,11 @@ class Dispatcher:
     # ------------------------------------------------------------------
 
     async def _dispatch(self, payload: dict) -> None:
-        """Fan out one payload to every registered handler in order."""
+        """
+        Process one transcript payload through all three pipeline actions.
+        """
+        # ── Action A: forward raw payload to WebSocket immediately ─────
+        # This delivers interim results in real-time to the Unity headset.
         for handler in self._handlers:
             try:
                 await handler(payload)
@@ -130,5 +146,27 @@ class Dispatcher:
                     f"raised an error: {exc}",
                     exc_info=True,
                 )
-                # Continue to the next handler — don't let one bad handler
-                # block the others
+                # Continue to the next handler — one bad handler must not
+                # block the pipeline
+
+        # ── Action B: persist to session memory ────────────────────────
+        # add_transcript() silently ignores isFinal=False entries.
+        self._memory.add_transcript(
+            speaker_tag=payload.get("speakerTag", 0),
+            text=payload.get("transcript", ""),
+            is_final=payload.get("isFinal", False),
+        )
+
+        # ── Action C: (placeholder) LLM trigger ────────────────────────
+        # When enough unprocessed sentences have accumulated, fire the
+        # LLM processing pipeline.  Replace the log statement below with
+        # a real LLM API call (e.g. asyncio.create_task(llm_worker.run()))
+        # when you are ready to integrate.
+        if len(self._memory.unprocessed_buffer) >= LLM_TRIGGER_THRESHOLD:
+            context = self._memory.get_context()
+            logger.info(
+                f"[{self._client_id}] [LLM TRIGGER] "
+                f"Unprocessed buffer reached {LLM_TRIGGER_THRESHOLD} items. "
+                f"Triggering LLM processing with context:\n{context}"
+            )
+            self._memory.clear_unprocessed()
