@@ -31,5 +31,16 @@ AUDIO_QUEUE_MAXSIZE: int = 0
 TRANSCRIPT_QUEUE_MAXSIZE: int = 0
 THREAD_QUEUE_TIMEOUT: float = 1.0
 
+# ---------------------------------------------------------------------------
+# MEMORY BUFFER SIZES & LLM THRESHOLD
+# ---------------------------------------------------------------------------
+
 DEFAULT_CONTEXT_WINDOW: int = 5
 LLM_TRIGGER_THRESHOLD: int = 3
+
+# ---------------------------------------------------------------------------
+# Vertex AI / Gemini  — set VERTEX_PROJECT_ID to your GCP project ID
+# ---------------------------------------------------------------------------
+VERTEX_PROJECT_ID: str = "still-emissary-501810-q7"
+VERTEX_LOCATION: str = "us-central1"
+GEMINI_MODEL: str = "gemini-2.5-flash"

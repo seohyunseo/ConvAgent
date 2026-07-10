@@ -6,3 +6,7 @@ websockets>=11.0,<14.0
 
 # Google Cloud Speech-to-Text  (uses the v1 API via google.cloud.speech)
 google-cloud-speech>=2.21.0
+
+# Google Gemini via Vertex AI  (google-genai SDK)
+google-genai>=1.0.0
+

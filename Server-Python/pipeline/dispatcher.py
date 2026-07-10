@@ -39,6 +39,7 @@ import asyncio
 import logging
 from typing import TYPE_CHECKING, Any, Awaitable, Callable
 
+from llm.llm_pipeline import run_pipeline
 from memory.session_memory import LLM_TRIGGER_THRESHOLD, SessionMemory
 
 if TYPE_CHECKING:
@@ -48,6 +49,26 @@ logger = logging.getLogger(__name__)
 
 # Type alias: any async callable that accepts a transcript dict
 TranscriptHandler = Callable[[dict], Awaitable[Any]]
+
+
+async def _run_pipeline_safe(context: str, client_id: str) -> None:
+    """
+    Exception-safe wrapper around ``run_pipeline``.
+
+    Spawned as a fire-and-forget background task so that a Gemini API
+    error never crashes the Dispatcher or the WebSocket session.
+    """
+    try:
+        result = await run_pipeline(context_text=context, client_id=client_id)
+        logger.info(
+            f"[{client_id}] LLM Pipeline completed successfully. "
+            f"Result keys: {list(result.keys())}"
+        )
+    except Exception as exc:
+        logger.error(
+            f"[{client_id}] LLM Pipeline raised an unhandled error: {exc}",
+            exc_info=True,
+        )
 
 
 class Dispatcher:
@@ -157,16 +178,20 @@ class Dispatcher:
             is_final=payload.get("isFinal", False),
         )
 
-        # ── Action C: (placeholder) LLM trigger ────────────────────────
-        # When enough unprocessed sentences have accumulated, fire the
-        # LLM processing pipeline.  Replace the log statement below with
-        # a real LLM API call (e.g. asyncio.create_task(llm_worker.run()))
-        # when you are ready to integrate.
+        # ── Action C: fire the LLM pipeline as a background task ─────────
+        # unprocessed_buffer is cleared immediately so the Dispatcher does
+        # not trigger again while the (potentially slow) Gemini call runs.
+        # _run_pipeline_safe catches all exceptions so a Gemini error can
+        # never crash the WebSocket session.
         if len(self._memory.unprocessed_buffer) >= LLM_TRIGGER_THRESHOLD:
             context = self._memory.get_context()
+            self._memory.clear_unprocessed()
             logger.info(
                 f"[{self._client_id}] [LLM TRIGGER] "
-                f"Unprocessed buffer reached {LLM_TRIGGER_THRESHOLD} items. "
-                f"Triggering LLM processing with context:\n{context}"
+                f"Buffer reached {LLM_TRIGGER_THRESHOLD} items — "
+                f"spawning pipeline task."
             )
-            self._memory.clear_unprocessed()
+            asyncio.create_task(
+                _run_pipeline_safe(context=context, client_id=self._client_id),
+                name=f"llm-pipeline-{self._client_id}",
+            )
