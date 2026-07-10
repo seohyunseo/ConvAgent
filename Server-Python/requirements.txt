@@ -1,0 +1,8 @@
+# ConvAgent Python Middleware Server — Dependencies
+# Install with:  pip install -r requirements.txt
+
+# WebSocket server
+websockets>=11.0,<14.0
+
+# Google Cloud Speech-to-Text  (uses the v1 API via google.cloud.speech)
+google-cloud-speech>=2.21.0
