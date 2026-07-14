@@ -85,44 +85,39 @@ Given,
 1. Previous conversation: {context}
 2. Latest utterance: {utterance}
 3. Extracted entities: {entities}
-4. Entities memory: TBD
 
 Evaluate 'priority' of each entity using the following criteria.
 
-1. Context Relevance
-How essential is the entity for understanding the current conversation?
+1. Context Relevance (relevance)
+How relevant is the entity for understanding the current conversation? (high if relevant, low if not relevant)
 
-2. Dependency
-Does understanding other entities depend on understanding this entity?
+2. Dependency (dependency)
+Does understanding other entities depend on understanding this entity? (high if depends, low if not depends)
 
-3. Future Impact
-Is this entity likely to be referenced again later in the conversation?
-
-4. Recoverability
-Can the conversation still be understood without knowing this entity?
-
-5. Explanation Benefit
-Would explaining this entity improve understanding of multiple parts of the conversation?
+3. Explanation Benefit (benefit)
+Would explaining this entity improve understanding of multiple parts of the conversation? (high if benefit, low if not benefit)
 
 Evaluate 'shared_knowledge' of each entity using the following criteria.
 
-1. Conversational Familiarity
-How familiar with this entity is the user in this conversation?
+1. Conversational Familiarity (familiarity)
+How familiar with this entity is the user in this conversation? (high if familiar, low if unfamiliar)
 
-2. Domain Difficulty
-How difficult is this entity to understand for the general user with only a few domain knowledge?
+2. Domain Difficulty (difficulty)
+How difficult is this entity to understand for the general user? (high if difficult, low if easy)
 
-3. Explanation History
-Has this entity been explained before?
 
-Return only JSON.
+Return only JSON. Do not output anything else.
 
+Required JSON format:
 {{
-    "priority_entities":
+    "candidate_entities":
         {{"entity":"",
-          "priority":0.0,
-          "shared_knowledge":0.0}}
+          "relevance":0.0,
+          "dependency":0.0,
+          "benefit":0.0,
+          "familiarity":0.0,
+          "difficulty":0.0}}
 }}
 
-Priority and Shared Knowledge should be normalized between 0 and 1.
+Each value should be normalized between 0 and 1.
 """

@@ -18,8 +18,8 @@ Pipeline Topology
     │                                        │                    │
     │                                  [Dispatcher]               │
     │                                        │                    │
-    │                               ┌────────┴────────┐          │
-    │                          (now)│           (future)│         │
+    │                               ┌────────┴────────┐           │
+    │                          (now)│         (future)│           │
     │                        [ResultSender]      [LLMModule]      │
     │                               │                             │
     │                          WebSocket ◄────────────────────────┘

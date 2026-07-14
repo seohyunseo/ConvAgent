@@ -41,6 +41,7 @@ from typing import TYPE_CHECKING, Any, Awaitable, Callable
 
 from llm.llm_pipeline import run_pipeline
 from memory.session_memory import LLM_TRIGGER_THRESHOLD, SessionMemory
+from utils.utils import calculate_score
 
 if TYPE_CHECKING:
     pass

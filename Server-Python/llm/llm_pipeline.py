@@ -32,13 +32,13 @@ import logging
 from google import genai
 from google.genai import types
 
-# from langchain_google_vertexai import ChatVertexAI
-from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain_google_vertexai import ChatVertexAI
 from langchain_core.prompts import PromptTemplate
 from langchain_core.output_parsers import JsonOutputParser
 
 from config import GEMINI_MODEL, VERTEX_LOCATION, VERTEX_PROJECT_ID
 from llm.prompts import PROMPT_STEP_1, PROMPT_STEP_2
+from utils.utils import calculate_score
 
 logger = logging.getLogger(__name__)
 
@@ -63,7 +63,7 @@ def _get_chains():
         )
         
         # 1. 모델 초기화 (JSON 출력 강제 설정 포함)
-        llm = ChatGoogleGenerativeAI(
+        llm = ChatVertexAI(
             model_name=GEMINI_MODEL,
             project=VERTEX_PROJECT_ID,
             location=VERTEX_LOCATION,
@@ -138,4 +138,15 @@ async def run_pipeline(context_text: str, utterance_text: str, client_id: str = 
         f"[{client_id}] LLM Pipeline: all steps complete. "
         f"Keys returned: {list(pipeline_result.keys())}"
     )
+
+    # --- Step 3: Select Target Entity (NEW) ---
+    logger.debug(f"[{client_id}] [Step 3] Calculating final target entity.")
+    try:
+        selected_entity = await calculate_score(pipeline_result["step2"], client_id)
+        pipeline_result["step3"] = selected_entity
+        logger.info(f"[{client_id}] [Step 3] Selected target: {selected_entity}")
+    except Exception as e:
+        logger.error(f"[{client_id}] [Step 3] Failed to calculate score: {e}")
+        pipeline_result["step3"] = None
+
     return pipeline_result
