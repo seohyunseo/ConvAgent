@@ -32,8 +32,13 @@ import logging
 from google import genai
 from google.genai import types
 
+# from langchain_google_vertexai import ChatVertexAI
+from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain_core.prompts import PromptTemplate
+from langchain_core.output_parsers import JsonOutputParser
+
 from config import GEMINI_MODEL, VERTEX_LOCATION, VERTEX_PROJECT_ID
-from llm.prompts import PROMPT_STEP_1_EXTRACT
+from llm.prompts import PROMPT_STEP_1, PROMPT_STEP_2
 
 logger = logging.getLogger(__name__)
 
@@ -43,134 +48,91 @@ logger = logging.getLogger(__name__)
 #   1. Server startup never fails due to network or credential issues.
 #   2. Config changes (VERTEX_PROJECT_ID etc.) take effect before first use.
 # ---------------------------------------------------------------------------
-_client: genai.Client | None = None
+_step1_chain = None
+_step2_chain = None
 
 
-def _get_client() -> genai.Client:
-    """Return (and lazily create) the shared Gemini client."""
-    global _client
-    if _client is None:
+def _get_chains():
+    """Return (and lazily create) the LangChain pipelines."""
+    global _step1_chain, _step2_chain
+    
+    if _step1_chain is None:
         logger.info(
-            f"Initialising Gemini client — project={VERTEX_PROJECT_ID}, "
+            f"Initialising LangChain Gemini client — project={VERTEX_PROJECT_ID}, "
             f"location={VERTEX_LOCATION}, model={GEMINI_MODEL}"
         )
-        _client = genai.Client(
-            vertexai=True,
+        
+        # 1. 모델 초기화 (JSON 출력 강제 설정 포함)
+        llm = ChatGoogleGenerativeAI(
+            model_name=GEMINI_MODEL,
             project=VERTEX_PROJECT_ID,
             location=VERTEX_LOCATION,
+            temperature=0,
+            model_kwargs={"response_mime_type": "application/json"}
         )
-    return _client
+        
+        # 2. JSON 파서 (모델의 텍스트 응답을 자동으로 dict로 파싱)
+        json_parser = JsonOutputParser()
 
+        # 3. 체인 생성 (LCEL 문법: Prompt | LLM | Parser)
+        # prompts.py에 정의된 프롬프트 내에 {context}, {utterance}, {entities} 등의 
+        # 변수 자리가 비워져 있다고 가정합니다.
+        prompt1 = PromptTemplate.from_template(PROMPT_STEP_1)
+        _step1_chain = prompt1 | llm | json_parser
 
-# Shared config that enforces a strict JSON response from the model
-_JSON_CONFIG = types.GenerateContentConfig(
-    response_mime_type="application/json",
-)
+        prompt2 = PromptTemplate.from_template(PROMPT_STEP_2)
+        _step2_chain = prompt2 | llm | json_parser
 
-
-# ---------------------------------------------------------------------------
-# Internal helper
-# ---------------------------------------------------------------------------
-
-async def _generate_json(prompt: str, client_id: str, step_label: str) -> dict:
-    """
-    Call Gemini with *prompt*, enforce JSON output, and return a parsed dict.
-
-    Parameters
-    ----------
-    prompt:
-        The fully-rendered prompt string (variables already substituted).
-    client_id:
-        Short session ID for log traceability.
-    step_label:
-        Human-readable label like "Step 1 / Entity Extraction" for logs.
-
-    Returns
-    -------
-    dict
-        Parsed JSON object from the model response.
-
-    Raises
-    ------
-    json.JSONDecodeError
-        If the model returns something that isn't valid JSON (should be
-        rare when response_mime_type="application/json" is set).
-    """
-    logger.debug(f"[{client_id}] [{step_label}] Sending request to Gemini.")
-
-    response = await _get_client().aio.models.generate_content(
-        model=GEMINI_MODEL,
-        contents=prompt,
-        config=_JSON_CONFIG,
-    )
-
-    raw_text: str = response.text
-    logger.debug(f"[{client_id}] [{step_label}] Raw response: {raw_text}")
-
-    parsed: dict = json.loads(raw_text)
-    logger.info(f"[{client_id}] [{step_label}] Parsed result: {parsed}")
-    return parsed
+    return _step1_chain, _step2_chain
 
 
 # ---------------------------------------------------------------------------
 # Public orchestrator
 # ---------------------------------------------------------------------------
 
-async def run_pipeline(context_text: str, client_id: str = "unknown") -> dict:
+async def run_pipeline(context_text: str, utterance_text: str, client_id: str = "unknown") -> dict:
     """
-    Execute the full prompt-chaining pipeline and return all step results.
-
-    Steps run **sequentially**; each step's parsed JSON is available as a
-    local variable before the next step's prompt is formatted.
-
-    Parameters
-    ----------
-    context_text:
-        The formatted conversation context from ``SessionMemory.get_context()``.
-    client_id:
-        Short session ID forwarded to log messages for traceability.
-
-    Returns
-    -------
-    dict
-        ``{"step1": {...}, "step2": {...}, ...}`` — one key per completed step.
+    Execute the full LangChain prompt-chaining pipeline sequentially.
     """
     logger.info(
         f"[{client_id}] LLM Pipeline: starting.\n"
         f"  Context ({len(context_text)} chars):\n{context_text}"
+        f"  Utterance ({len(utterance_text)} chars):\n{utterance_text}"
     )
 
     pipeline_result: dict = {}
+    
+    # 지연 초기화된 체인 모듈들을 가져옵니다.
+    step1_chain, step2_chain = _get_chains()
 
     # ── Step 1: Entity / Terminology Extraction ────────────────────────────
-    step1_prompt = PROMPT_STEP_1_EXTRACT.format(context=context_text)
-    step1_result = await _generate_json(
-        prompt=step1_prompt,
-        client_id=client_id,
-        step_label="Step 1 / Entity Extraction",
-    )
+    logger.debug(f"[{client_id}] [Step 1] Executing LangChain module.")
+    
+    # ainvoke()를 통해 비동기로 인풋 딕셔너리만 전달합니다.
+    step1_result = await step1_chain.ainvoke({
+        "context": context_text,
+        "utterance": utterance_text
+    })
+    
     pipeline_result["step1"] = step1_result
-    # step1_entities = step1_result.get("entities", [])   # ← available for Step 2
+    logger.info(f"[{client_id}] [Step 1] Parsed result: {step1_result}")
+    
+    # 다음 스텝으로 넘길 데이터를 추출합니다.
+    step1_entities = step1_result.get("entities", [])
 
-    # ── Step 2 placeholder ─────────────────────────────────────────────────
-    # Uncomment and adapt once PROMPT_STEP_2_xxx is defined in prompts.py.
-    #
-    # from llm.prompts import PROMPT_STEP_2_SUMMARISE
-    # step2_prompt = PROMPT_STEP_2_SUMMARISE.format(
-    #     entities=json.dumps(step1_entities, ensure_ascii=False),
-    #     context=context_text,
-    # )
-    # step2_result = await _generate_json(
-    #     prompt=step2_prompt,
-    #     client_id=client_id,
-    #     step_label="Step 2 / Summarisation",
-    # )
-    # pipeline_result["step2"] = step2_result
 
-    # ── Step 3 placeholder ─────────────────────────────────────────────────
-    # from llm.prompts import PROMPT_STEP_3_xxx
-    # step3_result = await _generate_json(...)
-    # pipeline_result["step3"] = step3_result
+    # ── Step 2: Priority Estimation ─────────────────────────────────────────
+    logger.debug(f"[{client_id}] [Step 2] Executing LangChain module.")
+    
+    # 이전 스텝의 결과를 인풋 변수로 포함하여 전달합니다.
+    step2_result = await step2_chain.ainvoke({
+        "entities": step1_entities,
+        "context": context_text,
+        "utterance": utterance_text
+    })
+    
+    pipeline_result["step2"] = step2_result
+    logger.info(f"[{client_id}] [Step 2] Parsed result: {step2_result}")
 
     logger.info(
         f"[{client_id}] LLM Pipeline: all steps complete. "

@@ -35,29 +35,34 @@ Use Python str.format()-style placeholders: {variable_name}.
 # Output schema (enforced by response_mime_type="application/json"):
 #   {"entities": ["entity1", "entity2", ...]}
 # ===========================================================================
-PROMPT_STEP_1_EXTRACT = """\
-You are an expert conversation analyst specializing in extracting key information \
-from spoken dialogue.
+PROMPT_STEP_1 = """\
+You are an entity extraction module for a proactive AR assistant.
 
-Below is a transcript of a real-time conversation between multiple speakers. \
-Analyze the text carefully and extract all of the following:
-  - Named entities  (people, organizations, places, product names)
-  - Domain-specific terminology or technical jargon
-  - Significant nouns or concepts that are central to the discussion
+Given the previous conversation and the latest utterance,
 
-Conversation transcript:
+1. Correct obvious speech recognition errors on 'latest utterance' refering only the 'previous conversation' as context.
+2. Extract concepts that are important for understanding the current conversation from only 'latest utterance'.
+3. Normalize entities into their canonical names.
+
+'previous conversation' (context):
 \"\"\"
 {context}
 \"\"\"
 
+'latest utterance':
+\"\"\"
+{utterance}
+\"\"\"
+
 Rules:
-- Respond with a single, valid JSON object and nothing else.
-- Do NOT include explanations, markdown fences, or extra text.
-- Exclude common stopwords, filler words, and pronouns.
+- Respond with valid JSON objects and nothing else.
+- Do NOT include explanations, markdown fences, general nouns, pronouns, common verbs, number (numeric values) or extra text.
 - If no meaningful entities are found, return an empty list.
 
 Required JSON format:
-{{"entities": ["entity1", "entity2", "entity3"]}}
+{{ "recovered_utterance":"",
+   "entities":["", "", ...]
+}}
 """
 
 # ===========================================================================
@@ -72,20 +77,52 @@ Required JSON format:
 # Output schema:
 #   {"summary": "..."}
 #
-# PROMPT_STEP_2_SUMMARISE = """\
-# You are a concise conversation summariser.
-# Given the following key entities: {entities}
-# And the conversation:
-# \"\"\"
-# {context}
-# \"\"\"
-# Produce a 2-3 sentence summary. Respond only with:
-# {{"summary": "your summary here"}}
-# """
+PROMPT_STEP_2 = """\
+You are a reasoning module for proactive common ground support during face-to-face conversations.
+Your task is to estimate which entities should be explained first considering 'priority' and 'shared_knowledge'.
 
-# ===========================================================================
-# Step 3 placeholder — add your next prompt here
-# ===========================================================================
-# PROMPT_STEP_3_xxx = """\
-# ...
-# """
+Given,
+1. Previous conversation: {context}
+2. Latest utterance: {utterance}
+3. Extracted entities: {entities}
+4. Entities memory: TBD
+
+Evaluate 'priority' of each entity using the following criteria.
+
+1. Context Relevance
+How essential is the entity for understanding the current conversation?
+
+2. Dependency
+Does understanding other entities depend on understanding this entity?
+
+3. Future Impact
+Is this entity likely to be referenced again later in the conversation?
+
+4. Recoverability
+Can the conversation still be understood without knowing this entity?
+
+5. Explanation Benefit
+Would explaining this entity improve understanding of multiple parts of the conversation?
+
+Evaluate 'shared_knowledge' of each entity using the following criteria.
+
+1. Conversational Familiarity
+How familiar with this entity is the user in this conversation?
+
+2. Domain Difficulty
+How difficult is this entity to understand for the general user with only a few domain knowledge?
+
+3. Explanation History
+Has this entity been explained before?
+
+Return only JSON.
+
+{{
+    "priority_entities":
+        {{"entity":"",
+          "priority":0.0,
+          "shared_knowledge":0.0}}
+}}
+
+Priority and Shared Knowledge should be normalized between 0 and 1.
+"""

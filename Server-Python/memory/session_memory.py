@@ -117,11 +117,22 @@ class SessionMemory:
         str
             Formatted context string.  Empty string if history is empty.
         """
-        recent = self.history[-window_size:]
+        recent = self.history[-(window_size+1):-1]
         return "\n".join(
             f"Speaker {entry['speaker']}: {entry['text']}"
             for entry in recent
         )
+
+    def get_last_utterance(self) -> str:
+        """
+        Return the last utterance from the history.
+
+        Returns
+        -------
+        str
+            Last utterance text. Empty string if history is empty.
+        """
+        return self.history[-1]["text"] if self.history else ""
 
     def clear_unprocessed(self) -> None:
         """

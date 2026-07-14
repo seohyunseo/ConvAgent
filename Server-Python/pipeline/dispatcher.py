@@ -51,7 +51,7 @@ logger = logging.getLogger(__name__)
 TranscriptHandler = Callable[[dict], Awaitable[Any]]
 
 
-async def _run_pipeline_safe(context: str, client_id: str) -> None:
+async def _run_pipeline_safe(context: str, utterance: str, client_id: str) -> None:
     """
     Exception-safe wrapper around ``run_pipeline``.
 
@@ -59,7 +59,7 @@ async def _run_pipeline_safe(context: str, client_id: str) -> None:
     error never crashes the Dispatcher or the WebSocket session.
     """
     try:
-        result = await run_pipeline(context_text=context, client_id=client_id)
+        result = await run_pipeline(context_text=context, utterance_text=utterance, client_id=client_id)
         logger.info(
             f"[{client_id}] LLM Pipeline completed successfully. "
             f"Result keys: {list(result.keys())}"
@@ -185,6 +185,7 @@ class Dispatcher:
         # never crash the WebSocket session.
         if len(self._memory.unprocessed_buffer) >= LLM_TRIGGER_THRESHOLD:
             context = self._memory.get_context()
+            utterance = self._memory.get_last_utterance()
             self._memory.clear_unprocessed()
             logger.info(
                 f"[{self._client_id}] [LLM TRIGGER] "
@@ -192,6 +193,6 @@ class Dispatcher:
                 f"spawning pipeline task."
             )
             asyncio.create_task(
-                _run_pipeline_safe(context=context, client_id=self._client_id),
+                _run_pipeline_safe(context=context, utterance=utterance, client_id=self._client_id),
                 name=f"llm-pipeline-{self._client_id}",
             )
