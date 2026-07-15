@@ -44,7 +44,6 @@ async def calculate_score(entities_output: Dict[str, Any], client_id: str) -> Di
         # 핵심 수식 대입: NeedScore = Priority * (1 - Shared_Knowledge)
         need_score = priority + (1.0 - shared_knowledge)
         
-        
         if need_score > max_need_score:
             max_need_score = need_score
             best_entity = {

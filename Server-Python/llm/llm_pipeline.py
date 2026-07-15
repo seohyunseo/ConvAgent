@@ -37,7 +37,7 @@ from langchain_core.prompts import PromptTemplate
 from langchain_core.output_parsers import JsonOutputParser
 
 from config import GEMINI_MODEL, VERTEX_LOCATION, VERTEX_PROJECT_ID
-from llm.prompts import PROMPT_STEP_1, PROMPT_STEP_2
+from llm.prompts import PROMPT_STEP_1, PROMPT_STEP_2, PROMPT_STEP_4
 from utils.utils import calculate_score
 
 logger = logging.getLogger(__name__)
@@ -83,7 +83,10 @@ def _get_chains():
         prompt2 = PromptTemplate.from_template(PROMPT_STEP_2)
         _step2_chain = prompt2 | llm | json_parser
 
-    return _step1_chain, _step2_chain
+        prompt4 = PromptTemplate.from_template(PROMPT_STEP_4)
+        _step4_chain = prompt4 | llm | json_parser
+
+    return _step1_chain, _step2_chain, _step4_chain
 
 
 # ---------------------------------------------------------------------------
@@ -103,7 +106,7 @@ async def run_pipeline(context_text: str, utterance_text: str, client_id: str = 
     pipeline_result: dict = {}
     
     # 지연 초기화된 체인 모듈들을 가져옵니다.
-    step1_chain, step2_chain = _get_chains()
+    step1_chain, step2_chain, step4_chain = _get_chains()
 
     # ── Step 1: Entity / Terminology Extraction ────────────────────────────
     logger.debug(f"[{client_id}] [Step 1] Executing LangChain module.")
@@ -134,11 +137,6 @@ async def run_pipeline(context_text: str, utterance_text: str, client_id: str = 
     pipeline_result["step2"] = step2_result
     logger.info(f"[{client_id}] [Step 2] Parsed result: {step2_result}")
 
-    logger.info(
-        f"[{client_id}] LLM Pipeline: all steps complete. "
-        f"Keys returned: {list(pipeline_result.keys())}"
-    )
-
     # --- Step 3: Select Target Entity (NEW) ---
     logger.debug(f"[{client_id}] [Step 3] Calculating final target entity.")
     try:
@@ -148,5 +146,24 @@ async def run_pipeline(context_text: str, utterance_text: str, client_id: str = 
     except Exception as e:
         logger.error(f"[{client_id}] [Step 3] Failed to calculate score: {e}")
         pipeline_result["step3"] = None
+
+    
+
+     # ── Step 4: Description Generation ─────────────────────────────────────────
+    logger.debug(f"[{client_id}] [Step 4] Executing LangChain module.")
+    
+    # 이전 스텝의 결과를 인풋 변수로 포함하여 전달합니다.
+    step4_result = await step4_chain.ainvoke({
+        "entity": pipeline_result["step3"]["selected_target"],
+        "context": context_text
+    })
+    
+    pipeline_result["step4"] = step4_result
+    logger.info(f"[{client_id}] [Step 4] Parsed result: {step4_result}")
+
+    logger.info(
+        f"[{client_id}] LLM Pipeline: all steps complete. "
+        f"Keys returned: {list(pipeline_result.keys())}"
+    )
 
     return pipeline_result

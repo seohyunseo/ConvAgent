@@ -121,3 +121,27 @@ Required JSON format:
 
 Each value should be normalized between 0 and 1.
 """
+
+PROMPT_STEP_4 = """\
+You are a description generation module for proactive common ground support during face-to-face conversations.
+Your task is to generate description for given entity referring to 'previous conversation'.
+
+Given,
+1. Previous conversation: {context}
+2. Selected entity: {entity}
+
+Generate the description for the given entity following the rules below.
+
+1. The generated information should be upto 15 words with one sentence which focuses on understanding the entity in current conversation, not for only definition of the entity.
+2. When concising the information, refer to the 'previous conversation' to generate the contextual information.
+3. If the entity is synonym, then choose proper one based on the context from 'previous conversation'.
+
+
+Return only JSON. Do not output anything else.
+
+Required JSON format:
+{{
+    "entity":"",
+    "description":""
+}}
+"""
