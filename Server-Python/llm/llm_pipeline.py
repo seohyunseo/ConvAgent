@@ -38,7 +38,8 @@ from langchain_core.output_parsers import JsonOutputParser
 
 from config import GEMINI_MODEL, VERTEX_LOCATION, VERTEX_PROJECT_ID
 from llm.prompts import PROMPT_STEP_1, PROMPT_STEP_2, PROMPT_STEP_4
-from utils.utils import calculate_score
+from memory.session_memory import SessionMemory
+from utils.utils import calculate_score, save_entity
 
 logger = logging.getLogger(__name__)
 
@@ -50,11 +51,11 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 _step1_chain = None
 _step2_chain = None
-
+_step4_chain = None
 
 def _get_chains():
     """Return (and lazily create) the LangChain pipelines."""
-    global _step1_chain, _step2_chain
+    global _step1_chain, _step2_chain, _step4_chain
     
     if _step1_chain is None:
         logger.info(
@@ -93,7 +94,12 @@ def _get_chains():
 # Public orchestrator
 # ---------------------------------------------------------------------------
 
-async def run_pipeline(context_text: str, utterance_text: str, client_id: str = "unknown") -> dict:
+async def run_pipeline(
+    context_text: str,
+    utterance_text: str,
+    client_id: str = "unknown",
+    memory: SessionMemory | None = None,
+) -> dict:
     """
     Execute the full LangChain prompt-chaining pipeline sequentially.
     """
@@ -137,29 +143,35 @@ async def run_pipeline(context_text: str, utterance_text: str, client_id: str = 
     pipeline_result["step2"] = step2_result
     logger.info(f"[{client_id}] [Step 2] Parsed result: {step2_result}")
 
-    # --- Step 3: Select Target Entity (NEW) ---
+    # --- Step 3: Select Target Entity ---
     logger.debug(f"[{client_id}] [Step 3] Calculating final target entity.")
     try:
-        selected_entity = await calculate_score(pipeline_result["step2"], client_id)
+        selected_entity = await calculate_score(pipeline_result["step2"], client_id, memory)
         pipeline_result["step3"] = selected_entity
         logger.info(f"[{client_id}] [Step 3] Selected target: {selected_entity}")
     except Exception as e:
-        logger.error(f"[{client_id}] [Step 3] Failed to calculate score: {e}")
-        pipeline_result["step3"] = None
+        logger.error(f"[{client_id}] [Step 3] Failed to calculate score: {e}", exc_info=True)
+        # Use a safe fallback dict so Step 4 can always do .get() on it
+        pipeline_result["step3"] = {"selected_target": None, "score": 0.0}
 
-    
+    # ── Step 4: Description Generation ────────────────────────────────────
+    selected_target: str | None = (pipeline_result["step3"] or {}).get("selected_target")
 
-     # ── Step 4: Description Generation ─────────────────────────────────────────
-    logger.debug(f"[{client_id}] [Step 4] Executing LangChain module.")
-    
-    # 이전 스텝의 결과를 인풋 변수로 포함하여 전달합니다.
-    step4_result = await step4_chain.ainvoke({
-        "entity": pipeline_result["step3"]["selected_target"],
-        "context": context_text
-    })
-    
-    pipeline_result["step4"] = step4_result
-    logger.info(f"[{client_id}] [Step 4] Parsed result: {step4_result}")
+    if not selected_target:
+        # Step 3 found no viable entity — skip LLM call and return an empty payload.
+        logger.warning(
+            f"[{client_id}] [Step 4] Skipping — Step 3 returned no valid target entity."
+        )
+        pipeline_result["step4"] = {"entity": "", "description": ""}
+    else:
+        logger.debug(f"[{client_id}] [Step 4] Executing LangChain module for entity='{selected_target}'.")
+        step4_result = await step4_chain.ainvoke({
+            "entity": selected_target,
+            "utterance": pipeline_result["step1"].get("recovered_utterance", utterance_text),
+        })
+        pipeline_result["step4"] = step4_result
+        save_entity(selected_target, client_id=client_id, memory=memory)
+        logger.info(f"[{client_id}] [Step 4] Parsed result: {step4_result}")
 
     logger.info(
         f"[{client_id}] LLM Pipeline: all steps complete. "

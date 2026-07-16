@@ -105,5 +105,7 @@ ServerData
 # Auto-generated cache in Assets folder
 [Aa]ssets/[Ss]ceneDependencyCache*
 
+[Aa]ssets/ConvAgent/Resources/
+
 credentials/
 *.env.example

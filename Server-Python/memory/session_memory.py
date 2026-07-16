@@ -57,6 +57,8 @@ class SessionMemory:
         # by clear_unprocessed() after the LLM processes the batch
         self.unprocessed_buffer: list[dict] = []
 
+        self.entity_memory: list[dict] = []
+
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
@@ -95,6 +97,31 @@ class SessionMemory:
             f"| history={len(self.history)}, "
             f"unprocessed={len(self.unprocessed_buffer)}"
         )
+
+    def add_entity_memory(self, entity: str) -> None:
+        """
+        Record an entity memory entry.
+
+        Parameters
+        ----------
+        entity:
+            Entity memory entry.
+        """
+        self.entity_memory.append(entity)
+        logger.info(
+            f"[{self._client_id}] Memory: stored entity memory - {entity} | entity_memory={len(self.entity_memory)}"
+        )
+
+    def get_entity_memory(self) -> list[str]:
+        """
+        Return the entity memory.
+
+        Returns
+        -------
+        list[str]
+            Entity memory.
+        """
+        return self.entity_memory
 
     def get_context(self, window_size: int = DEFAULT_CONTEXT_WINDOW) -> str:
         """

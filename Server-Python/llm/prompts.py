@@ -29,12 +29,7 @@ Use Python str.format()-style placeholders: {variable_name}.
 # ===========================================================================
 # Step 1 — Entity / Terminology Extraction
 # ===========================================================================
-# Input variable:
-#   {context}  — formatted conversation history from SessionMemory.get_context()
-#
-# Output schema (enforced by response_mime_type="application/json"):
-#   {"entities": ["entity1", "entity2", ...]}
-# ===========================================================================
+
 PROMPT_STEP_1 = """\
 You are an entity extraction module for a proactive AR assistant.
 
@@ -60,23 +55,20 @@ Rules:
 - If no meaningful entities are found, return an empty list.
 
 Required JSON format:
-{{ "recovered_utterance":"",
-   "entities":["", "", ...]
+{{
+    "recovered_utterance":"",
+    "entities":[
+        "", 
+        "",
+        ...
+    ]
 }}
 """
 
 # ===========================================================================
 # Step 2 placeholder — add your next prompt here
 # ===========================================================================
-# Example: summarise the conversation using the entities from Step 1.
-#
-# Input variables:
-#   {entities}  — JSON list string from Step 1 result
-#   {context}   — same conversation context passed to Step 1
-#
-# Output schema:
-#   {"summary": "..."}
-#
+
 PROMPT_STEP_2 = """\
 You are a reasoning module for proactive common ground support during face-to-face conversations.
 Your task is to estimate which entities should be explained first considering 'priority' and 'shared_knowledge'.
@@ -105,43 +97,54 @@ How familiar with this entity is the user in this conversation? (high if familia
 2. Domain Difficulty (difficulty)
 How difficult is this entity to understand for the general user? (high if difficult, low if easy)
 
-
-Return only JSON. Do not output anything else.
+Rules:
+- Respond with valid JSON objects and nothing else.
+- Each value should be normalized between 0 and 1.
 
 Required JSON format:
 {{
     "candidate_entities":
-        {{"entity":"",
-          "relevance":0.0,
-          "dependency":0.0,
-          "benefit":0.0,
-          "familiarity":0.0,
-          "difficulty":0.0}}
+        [
+            {{
+            "entity":"",
+            "relevance":0.0,
+            "dependency":0.0,
+            "benefit":0.0,
+            "familiarity":0.0,
+            "difficulty":0.0
+            }},
+            ...
+        ]
 }}
-
-Each value should be normalized between 0 and 1.
 """
 
+# ===========================================================================
+# Step 4 — Generate Definition of Given Entity
+# ===========================================================================
+
 PROMPT_STEP_4 = """\
-You are a description generation module for proactive common ground support during face-to-face conversations.
-Your task is to generate description for given entity referring to 'previous conversation'.
+You generate concise definition for 'given entity'.
+
+Your goal is to provide the definition of the given entity.
 
 Given,
-1. Previous conversation: {context}
-2. Selected entity: {entity}
+1. Current utterance: {utterance}
+2. Given entity: {entity}
 
-Generate the description for the given entity following the rules below.
+Instructions:
+- Use the current utterance to determine the intended meaning of the entity.
+- Describe only the aspect relevant to the current utterance.
+- Write in Korean.
+- Concise the text to be upto 30 characters.
+- Do not repeat the entity, maximize the explanation with in the limit of 30 characters.
+- Do not write complete sentences, but prefer concise noun phrases (e.g., "...하는 것", "...에 사용하는 것").
 
-1. The generated information should be upto 15 words with one sentence which focuses on understanding the entity in current conversation, not for only definition of the entity.
-2. When concising the information, refer to the 'previous conversation' to generate the contextual information.
-3. If the entity is synonym, then choose proper one based on the context from 'previous conversation'.
-
-
-Return only JSON. Do not output anything else.
+Rules:
+- Respond with valid JSON objects and nothing else.
 
 Required JSON format:
 {{
-    "entity":"",
-    "description":""
+    "entity": "",
+    "description": ""
 }}
 """

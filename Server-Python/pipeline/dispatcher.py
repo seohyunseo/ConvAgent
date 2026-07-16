@@ -41,7 +41,7 @@ from typing import TYPE_CHECKING, Any, Awaitable, Callable
 
 from llm.llm_pipeline import run_pipeline
 from memory.session_memory import LLM_TRIGGER_THRESHOLD, SessionMemory
-from utils.utils import calculate_score
+
 
 if TYPE_CHECKING:
     pass
@@ -52,19 +52,50 @@ logger = logging.getLogger(__name__)
 TranscriptHandler = Callable[[dict], Awaitable[Any]]
 
 
-async def _run_pipeline_safe(context: str, utterance: str, client_id: str) -> None:
+async def _run_pipeline_safe(
+    context: str,
+    utterance: str,
+    client_id: str,
+    send_callback: Callable[[dict], Awaitable[Any]],
+    memory: SessionMemory,
+) -> None:
     """
     Exception-safe wrapper around ``run_pipeline``.
+
+    After a successful pipeline run, serialises the Step 4 result into a
+    tagged payload and delivers it to the Unity client via ``send_callback``
+    (which fans out to all registered Dispatcher handlers, i.e. ResultSender).
 
     Spawned as a fire-and-forget background task so that a Gemini API
     error never crashes the Dispatcher or the WebSocket session.
     """
     try:
-        result = await run_pipeline(context_text=context, utterance_text=utterance, client_id=client_id)
+        result = await run_pipeline(
+            context_text=context,
+            utterance_text=utterance,
+            client_id=client_id,
+            memory=memory,
+        )
+
         logger.info(
-            f"[{client_id}] LLM Pipeline completed successfully. "
+            f"[{client_id}] LLM Pipeline completed. "
             f"Result keys: {list(result.keys())}"
         )
+
+        # Build the payload sent back to Unity.
+        # type='llm_result' lets the client distinguish this from STT transcripts.
+        step4 = result.get("step4") or {}
+        llm_payload: dict = {
+            "type": "llm_result",
+            "entity": step4.get("entity", ""),
+            "description": step4.get("description", ""),
+            # Include Step 3 score for debugging / analytics in Unity
+            "step3": result.get("step3"),
+        }
+
+        logger.info(f"[{client_id}] Sending LLM result to client: {llm_payload}")
+        await send_callback(llm_payload)
+
     except Exception as exc:
         logger.error(
             f"[{client_id}] LLM Pipeline raised an unhandled error: {exc}",
@@ -158,18 +189,18 @@ class Dispatcher:
         """
         # ── Action A: forward raw payload to WebSocket immediately ─────
         # This delivers interim results in real-time to the Unity headset.
-        for handler in self._handlers:
-            try:
-                await handler(payload)
-            except Exception as exc:
-                logger.error(
-                    f"[{self._client_id}] Handler "
-                    f"'{getattr(handler, '__qualname__', repr(handler))}' "
-                    f"raised an error: {exc}",
-                    exc_info=True,
-                )
-                # Continue to the next handler — one bad handler must not
-                # block the pipeline
+        # for handler in self._handlers:
+        #     try:
+        #         await handler(payload)
+        #     except Exception as exc:
+        #         logger.error(
+        #             f"[{self._client_id}] Handler "
+        #             f"'{getattr(handler, '__qualname__', repr(handler))}' "
+        #             f"raised an error: {exc}",
+        #             exc_info=True,
+        #         )
+        #         # Continue to the next handler — one bad handler must not
+        #         # block the pipeline
 
         # ── Action B: persist to session memory ────────────────────────
         # add_transcript() silently ignores isFinal=False entries.
@@ -193,7 +224,29 @@ class Dispatcher:
                 f"Buffer reached {LLM_TRIGGER_THRESHOLD} items — "
                 f"spawning pipeline task."
             )
+
+            # Capture handlers in a closure so the background task can send
+            # results back through the same WebSocket path as STT transcripts.
+            handlers = list(self._handlers)
+            client_id = self._client_id
+
+            async def _send_llm_result(result_payload: dict) -> None:
+                for handler in handlers:
+                    try:
+                        await handler(result_payload)
+                    except Exception as exc:
+                        logger.error(
+                            f"[{client_id}] LLM result handler error: {exc}",
+                            exc_info=True,
+                        )
+
             asyncio.create_task(
-                _run_pipeline_safe(context=context, utterance=utterance, client_id=self._client_id),
+                _run_pipeline_safe(
+                    context=context,
+                    utterance=utterance,
+                    client_id=self._client_id,
+                    send_callback=_send_llm_result,
+                    memory=self._memory,
+                ),
                 name=f"llm-pipeline-{self._client_id}",
             )
