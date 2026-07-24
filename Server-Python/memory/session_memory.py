@@ -3,9 +3,8 @@ memory/session_memory.py
 
 SessionMemory
 =============
-Manages the conversation history and unprocessed buffer for a single
-client session.  It is the source-of-truth that future LLM workers
-will read from and clear.
+Manages the conversation history for a single client session.
+It is the source-of-truth that LLM workers read from.
 
 Data stored per entry
 ---------------------
@@ -23,18 +22,15 @@ Lifecycle
                           |
                           v
               SessionMemory.add_transcript()
-                   /              \\
-          history[]         unprocessed_buffer[]
-        (permanent)           (cleared after LLM
-                                    trigger)
+                          |
+                          v
+                      history[]
+                     (permanent)
 """
 
 import logging
 import time
-from config import (
-    DEFAULT_CONTEXT_WINDOW,
-    LLM_TRIGGER_THRESHOLD
-)
+from config import DEFAULT_CONTEXT_WINDOW
 
 logger = logging.getLogger(__name__)
 
@@ -52,10 +48,6 @@ class SessionMemory:
 
         # Permanent, append-only record of every final transcript
         self.history: list[dict] = []
-
-        # Temporary holding area: filled by add_transcript(), cleared
-        # by clear_unprocessed() after the LLM processes the batch
-        self.unprocessed_buffer: list[dict] = []
 
         self.entity_memory: list[dict] = []
 
@@ -89,13 +81,11 @@ class SessionMemory:
         }
 
         self.history.append(entry)
-        self.unprocessed_buffer.append(entry)
 
         logger.info(
             f"[{self._client_id}] Memory: stored final transcript "
             f"(speaker={speaker_tag}) '{text}' "
-            f"| history={len(self.history)}, "
-            f"unprocessed={len(self.unprocessed_buffer)}"
+            f"| history={len(self.history)}"
         )
 
     def add_entity_memory(self, entity: str) -> None:
@@ -161,19 +151,6 @@ class SessionMemory:
         """
         return self.history[-1]["text"] if self.history else ""
 
-    def clear_unprocessed(self) -> None:
-        """
-        Empty the ``unprocessed_buffer``.
-
-        Called by the Dispatcher after a (real or placeholder) LLM
-        worker has consumed the buffered entries.
-        """
-        count = len(self.unprocessed_buffer)
-        self.unprocessed_buffer.clear()
-        logger.debug(
-            f"[{self._client_id}] Memory: unprocessed_buffer cleared "
-            f"({count} entries removed)."
-        )
 
     # ------------------------------------------------------------------
     # Convenience / introspection
@@ -187,6 +164,5 @@ class SessionMemory:
     def __repr__(self) -> str:
         return (
             f"<SessionMemory client={self._client_id} "
-            f"history={len(self.history)} "
-            f"unprocessed={len(self.unprocessed_buffer)}>"
+            f"history={len(self.history)}>"
         )

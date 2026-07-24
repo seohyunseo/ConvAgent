@@ -132,12 +132,10 @@ Given,
 2. Given entity: {entity}
 
 Instructions:
-- Use the current utterance to determine the intended meaning of the entity.
-- Describe only the aspect relevant to the current utterance.
 - Write in Korean.
-- Concise the text to be upto 30 characters.
 - Do not repeat the entity, maximize the explanation with in the limit of 30 characters.
 - Do not write complete sentences, but prefer concise noun phrases (e.g., "...하는 것", "...에 사용하는 것").
+- If the entity is synonym, choose proper one based on the context from current utterance.
 
 Rules:
 - Respond with valid JSON objects and nothing else.

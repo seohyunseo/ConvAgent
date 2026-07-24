@@ -4,16 +4,24 @@ Stage 1 — AudioReceiver
 ========================
 Reads raw PCM audio bytes from the WebSocket connection and enqueues
 them into ``audio_queue`` for downstream consumption by the STTWorker.
+
+Also handles text-frame signals from the client.  If the received text
+matches ``LLM_TRIGGER_SIGNAL`` (config.py), it is forwarded to
+``signal_queue`` so the Dispatcher can fire the LLM pipeline on demand.
+
 Responsibilities
 ----------------
 - Iterate over incoming WebSocket messages.
-- Filter for binary frames only (ignore stray text frames with a warning).
-- On connection close or any error, push a ``None`` sentinel to
-  ``audio_queue`` so the STTWorker knows the stream has ended.
+- Binary frames  → ``audio_queue`` (STTWorker)
+- Trigger text   → ``signal_queue`` (Dispatcher signal listener)
+- Other text     → log warning and ignore
+- On connection close or any error, push ``None`` sentinels to both
+  queues so downstream workers exit cleanly.
 """
 import asyncio
 import logging
 import websockets.exceptions
+from config import LLM_TRIGGER_SIGNAL
 logger = logging.getLogger(__name__)
 class AudioReceiver:
     """
@@ -24,6 +32,9 @@ class AudioReceiver:
     audio_queue:
         Asyncio queue that receives ``bytes`` chunks.
         A ``None`` sentinel is pushed when the stream ends.
+    signal_queue:
+        Asyncio queue that receives trigger strings from the client.
+        A ``None`` sentinel is pushed when the stream ends.
     client_id:
         Short identifier used in log messages.
     """
@@ -31,10 +42,12 @@ class AudioReceiver:
         self,
         websocket,
         audio_queue: asyncio.Queue,
+        signal_queue: asyncio.Queue,
         client_id: str,
     ) -> None:
         self._websocket = websocket
         self._audio_queue = audio_queue
+        self._signal_queue = signal_queue
         self._client_id = client_id
     async def run(self) -> None:
         """
@@ -51,11 +64,18 @@ class AudioReceiver:
                     #     f"({len(message)} bytes)"
                     # )
                 else:
-                    # Unexpected text frame — log and ignore
-                    logger.warning(
-                        f"[{self._client_id}] AudioReceiver received a text frame, "
-                        f"expected binary audio.  Ignoring."
-                    )
+                    # Text frame — check for LLM trigger signal
+                    text = message.strip()
+                    if text.lower() == LLM_TRIGGER_SIGNAL.lower():
+                        logger.info(
+                            f"[{self._client_id}] AudioReceiver: LLM trigger signal received."
+                        )
+                        await self._signal_queue.put(text)
+                    else:
+                        logger.warning(
+                            f"[{self._client_id}] AudioReceiver: unrecognised text frame "
+                            f"'{text}'. Ignoring."
+                        )
         except websockets.exceptions.ConnectionClosed as exc:
             logger.info(
                 f"[{self._client_id}] WebSocket closed "
@@ -70,9 +90,10 @@ class AudioReceiver:
                 exc_info=True,
             )
         finally:
-            # Always signal downstream that no more audio is coming
+            # Signal downstream that no more audio or triggers are coming
             await self._audio_queue.put(None)
+            await self._signal_queue.put(None)
             logger.info(
                 f"[{self._client_id}] AudioReceiver finished — "
-                f"EOF sentinel sent to audio_queue."
+                f"EOF sentinels sent to audio_queue and signal_queue."
             )

@@ -4,7 +4,7 @@ pipeline/dispatcher.py
 Stage 3 — Dispatcher / Router
 ==============================
 Consumes parsed transcript dicts from ``transcript_queue`` and performs
-three actions for every payload:
+two actions for every transcript payload:
 
     Action A  Send the raw JSON payload to the Unity client immediately
               (via registered handlers, e.g. ResultSender).
@@ -14,23 +14,25 @@ three actions for every payload:
               Only ``isFinal=True`` entries are actually stored (the
               memory class silently drops interim results).
 
-    Action C  Check if ``len(memory.unprocessed_buffer) >= LLM_TRIGGER_THRESHOLD``.
-              If the threshold is reached, log the context and clear the
-              buffer.  This is the placeholder for the future LLM worker —
-              swap the log statement for a real API call when ready.
+LLM trigger
+-----------
+The LLM pipeline is no longer fired by an internal buffer threshold.
+Instead, ``_signal_listener`` watches ``signal_queue``.  When the Unity
+client sends the string configured as ``LLM_TRIGGER_SIGNAL`` (config.py),
+``AudioReceiver`` forwards it to ``signal_queue`` and the Dispatcher
+snapshots the current context and spawns the LLM pipeline task.
 
 Extensibility
 -------------
-Additional processing stages (e.g. intent detection, sentiment analysis)
-can be added as handlers:
+Additional processing stages can be added as handlers:
 
     dispatcher.register_handler(my_module.process)   # ← add before sender
     dispatcher.register_handler(result_sender.send)
 
 Sentinel Protocol
 -----------------
-A ``None`` value on ``transcript_queue`` signals end-of-stream.
-The Dispatcher exits cleanly when it receives this sentinel.
+A ``None`` value on ``transcript_queue`` or ``signal_queue`` signals
+end-of-stream.  Both consumers exit cleanly when they receive it.
 """
 
 from __future__ import annotations
@@ -40,7 +42,7 @@ import logging
 from typing import TYPE_CHECKING, Any, Awaitable, Callable
 
 from llm.llm_pipeline import run_pipeline
-from memory.session_memory import LLM_TRIGGER_THRESHOLD, SessionMemory
+from memory.session_memory import SessionMemory
 
 
 if TYPE_CHECKING:
@@ -109,6 +111,8 @@ class Dispatcher:
     ----------
     transcript_queue:
         Source of transcript payload dicts.  ``None`` = end of stream.
+    signal_queue:
+        Source of LLM trigger signals from the client.  ``None`` = end.
     client_id:
         Short identifier used in log messages.
     memory:
@@ -118,10 +122,12 @@ class Dispatcher:
     def __init__(
         self,
         transcript_queue: asyncio.Queue,
+        signal_queue: asyncio.Queue,
         client_id: str,
         memory: SessionMemory,
     ) -> None:
         self._transcript_queue = transcript_queue
+        self._signal_queue = signal_queue
         self._client_id = client_id
         self._memory = memory
         self._handlers: list[TranscriptHandler] = []
@@ -153,10 +159,15 @@ class Dispatcher:
 
     async def run(self) -> None:
         """
-        Main coroutine.  Runs until it receives the ``None`` sentinel
-        or the task is cancelled.
+        Main coroutine.  Starts a ``_signal_listener`` sub-task to watch
+        for LLM trigger signals, then processes the transcript queue until
+        the EOF sentinel is received or the task is cancelled.
         """
         logger.info(f"[{self._client_id}] Dispatcher started.")
+        signal_task = asyncio.create_task(
+            self._signal_listener(),
+            name=f"signal-listener-{self._client_id}",
+        )
         try:
             while True:
                 payload = await self._transcript_queue.get()
@@ -177,18 +188,91 @@ class Dispatcher:
                 f"[{self._client_id}] Dispatcher error: {exc}", exc_info=True
             )
         finally:
+            signal_task.cancel()
+            await asyncio.gather(signal_task, return_exceptions=True)
             logger.info(f"[{self._client_id}] Dispatcher finished.")
 
     # ------------------------------------------------------------------
     # Private
     # ------------------------------------------------------------------
 
+    async def _signal_listener(self) -> None:
+        """
+        Concurrent sub-task that waits for LLM trigger signals.
+
+        Runs alongside the main transcript loop.  Each signal received
+        fires a new background LLM pipeline task.
+        """
+        logger.info(f"[{self._client_id}] Signal listener started.")
+        try:
+            while True:
+                signal = await self._signal_queue.get()
+
+                if signal is None:
+                    logger.info(
+                        f"[{self._client_id}] Signal listener received EOF — stopping."
+                    )
+                    break
+
+                logger.info(
+                    f"[{self._client_id}] [LLM TRIGGER] "
+                    f"Signal '{signal}' received — spawning pipeline task."
+                )
+                await self._fire_llm_pipeline()
+
+        except asyncio.CancelledError:
+            logger.info(f"[{self._client_id}] Signal listener cancelled.")
+        except Exception as exc:
+            logger.error(
+                f"[{self._client_id}] Signal listener error: {exc}", exc_info=True
+            )
+        finally:
+            logger.info(f"[{self._client_id}] Signal listener finished.")
+
+    async def _fire_llm_pipeline(self) -> None:
+        """
+        Snapshot current memory context and spawn a non-blocking LLM pipeline task.
+        """
+        context = self._memory.get_context()
+        utterance = self._memory.get_last_utterance()
+
+        # Capture handlers in a closure so the background task uses the
+        # handler list active at trigger time.
+        handlers = list(self._handlers)
+        client_id = self._client_id
+
+        async def _send_llm_result(result_payload: dict) -> None:
+            for handler in handlers:
+                try:
+                    await handler(result_payload)
+                except Exception as exc:
+                    logger.error(
+                        f"[{client_id}] LLM result handler error: {exc}",
+                        exc_info=True,
+                    )
+
+        asyncio.create_task(
+            _run_pipeline_safe(
+                context=context,
+                utterance=utterance,
+                client_id=self._client_id,
+                send_callback=_send_llm_result,
+                memory=self._memory,
+            ),
+            name=f"llm-pipeline-{self._client_id}",
+        )
+
     async def _dispatch(self, payload: dict) -> None:
         """
-        Process one transcript payload through all three pipeline actions.
+        Process one transcript payload.
+
+        Action A — forward to all registered handlers (e.g. ResultSender)
+                   so interim results reach the Unity client in real-time.
+        Action B — persist to SessionMemory (final-only; interim ignored).
+
+        LLM triggering (formerly Action C) is handled by _signal_listener.
         """
-        # ── Action A: forward raw payload to WebSocket immediately ─────
-        # This delivers interim results in real-time to the Unity headset.
+        # ── Action A: forward raw payload to WebSocket immediately ────────────
         # for handler in self._handlers:
         #     try:
         #         await handler(payload)
@@ -199,54 +283,12 @@ class Dispatcher:
         #             f"raised an error: {exc}",
         #             exc_info=True,
         #         )
-        #         # Continue to the next handler — one bad handler must not
-        #         # block the pipeline
+        #         # Continue to next handler — one bad handler must not block
 
-        # ── Action B: persist to session memory ────────────────────────
+        # ── Action B: persist to session memory ──────────────────────────────
         # add_transcript() silently ignores isFinal=False entries.
         self._memory.add_transcript(
             speaker_tag=payload.get("speakerTag", 0),
             text=payload.get("transcript", ""),
             is_final=payload.get("isFinal", False),
         )
-
-        # ── Action C: fire the LLM pipeline as a background task ─────────
-        # unprocessed_buffer is cleared immediately so the Dispatcher does
-        # not trigger again while the (potentially slow) Gemini call runs.
-        # _run_pipeline_safe catches all exceptions so a Gemini error can
-        # never crash the WebSocket session.
-        if len(self._memory.unprocessed_buffer) >= LLM_TRIGGER_THRESHOLD:
-            context = self._memory.get_context()
-            utterance = self._memory.get_last_utterance()
-            self._memory.clear_unprocessed()
-            logger.info(
-                f"[{self._client_id}] [LLM TRIGGER] "
-                f"Buffer reached {LLM_TRIGGER_THRESHOLD} items — "
-                f"spawning pipeline task."
-            )
-
-            # Capture handlers in a closure so the background task can send
-            # results back through the same WebSocket path as STT transcripts.
-            handlers = list(self._handlers)
-            client_id = self._client_id
-
-            async def _send_llm_result(result_payload: dict) -> None:
-                for handler in handlers:
-                    try:
-                        await handler(result_payload)
-                    except Exception as exc:
-                        logger.error(
-                            f"[{client_id}] LLM result handler error: {exc}",
-                            exc_info=True,
-                        )
-
-            asyncio.create_task(
-                _run_pipeline_safe(
-                    context=context,
-                    utterance=utterance,
-                    client_id=self._client_id,
-                    send_callback=_send_llm_result,
-                    memory=self._memory,
-                ),
-                name=f"llm-pipeline-{self._client_id}",
-            )

@@ -69,7 +69,7 @@ def check_entity_memory(entity_memory: list[str], entity:str, client_id: str) ->
     Check if the entity is already in the entity memory.
     """
     for entity_memory_entry in entity_memory:
-        logger.debug(f"[{client_id}] [Utils] Entity '{entity}' Entity memory: {entity_memory_entry}")
+        # logger.debug(f"[{client_id}] [Utils] Entity '{entity}' Entity memory: {entity_memory_entry}")
         if entity.replace(" ", "") == entity_memory_entry.replace(" ", ""):
             logger.info(
                         f"[{client_id}] [Utils] "

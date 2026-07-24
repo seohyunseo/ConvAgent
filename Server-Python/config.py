@@ -15,7 +15,7 @@ WS_PORT: int = 8080
 # ---------------------------------------------------------------------------
 # Audio Input
 # ---------------------------------------------------------------------------
-AUDIO_SAMPLE_RATE: int = 16_000   # Hz  (must match Unity client)
+AUDIO_SAMPLE_RATE: int = 48_000   # Hz  (must match Unity client)
 AUDIO_LANGUAGE: str = "ko-KR"
 
 # ---------------------------------------------------------------------------
@@ -29,14 +29,17 @@ DIARIZATION_MAX_SPEAKERS: int = 4
 # ---------------------------------------------------------------------------
 AUDIO_QUEUE_MAXSIZE: int = 0
 TRANSCRIPT_QUEUE_MAXSIZE: int = 0
-THREAD_QUEUE_TIMEOUT: float = 1.0
+THREAD_QUEUE_TIMEOUT: float = 0.5
 
 # ---------------------------------------------------------------------------
-# MEMORY BUFFER SIZES & LLM THRESHOLD
+# Session Memory
 # ---------------------------------------------------------------------------
-
 DEFAULT_CONTEXT_WINDOW: int = 5
-LLM_TRIGGER_THRESHOLD: int = 3
+
+# ---------------------------------------------------------------------------
+# LLM Trigger — string the Unity client sends to fire the pipeline
+# ---------------------------------------------------------------------------
+LLM_TRIGGER_SIGNAL: str = "trigger LLM"
 
 # ---------------------------------------------------------------------------
 # Vertex AI / Gemini  — set VERTEX_PROJECT_ID to your GCP project ID

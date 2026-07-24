@@ -9,7 +9,7 @@ public class JSONData
 
 }
 
-public class UIManager : MonoBehaviour
+public class DisplayManager : MonoBehaviour
 {
     [Header("Dependencies")]
     [Tooltip("Drag and drop the GameObject with WebSocketManager here.")]

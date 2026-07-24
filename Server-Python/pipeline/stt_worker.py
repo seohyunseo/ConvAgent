@@ -208,12 +208,12 @@ class STTWorker:
                     continue
                 if chunk is None:
                     logger.debug(
-                        f"[{self._client_id}] STT request generator: EOF sentinel received."
-                    )
+                        f"[{self._client_id}] STT request generator: EOF sentinel received.")
                     break
                 yield speech.StreamingRecognizeRequest(audio_content=chunk)
 
         try:
+            
             logger.info(
                 f"[{self._client_id}] Opening Google STT StreamingRecognize session."
             )
@@ -237,8 +237,13 @@ class STTWorker:
                         "speakerTag": speaker_tag,
                     }
 
-                    if(is_final):
-                        logger.info(
+                    # if(is_final):
+                    #     logger.info(
+                    #         f"[{self._client_id}] STT result "
+                    #         f"(final={is_final}, speaker={speaker_tag}): "
+                    #         f"'{transcript}'"
+                    #     )
+                    logger.info(
                             f"[{self._client_id}] STT result "
                             f"(final={is_final}, speaker={speaker_tag}): "
                             f"'{transcript}'"

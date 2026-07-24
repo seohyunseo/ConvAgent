@@ -62,6 +62,8 @@ class ClientSession:
         self._transcript_queue: asyncio.Queue = asyncio.Queue(
             maxsize=TRANSCRIPT_QUEUE_MAXSIZE
         )
+        # Unbounded: trigger signals are tiny strings, never back-pressured
+        self._signal_queue: asyncio.Queue = asyncio.Queue()
         self._memory: SessionMemory = SessionMemory(self.client_id)
         self._tasks: list[asyncio.Task] = []
 
@@ -114,6 +116,7 @@ class ClientSession:
         audio_receiver = AudioReceiver(
             websocket=self._websocket,
             audio_queue=self._audio_queue,
+            signal_queue=self._signal_queue,
             client_id=self.client_id,
         )
         stt_worker = STTWorker(
@@ -127,6 +130,7 @@ class ClientSession:
         )
         dispatcher = Dispatcher(
             transcript_queue=self._transcript_queue,
+            signal_queue=self._signal_queue,
             client_id=self.client_id,
             memory=self._memory,
         )

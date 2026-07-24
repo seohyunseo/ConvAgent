@@ -1,5 +1,8 @@
 using UnityEngine;
 using System;
+using System.Collections.Generic;
+using TMPro;
+using UnityEngine.UI;
 
 public class AudioManager : MonoBehaviour
 {
@@ -8,30 +11,60 @@ public class AudioManager : MonoBehaviour
     [SerializeField] private WebSocketManager webSocketManager;
 
     [Header("Audio Settings")]
-    [SerializeField] private int sampleRate = 16000;
+    [SerializeField] private int sampleRate = 48000;
     [SerializeField] private int bufferLengthSeconds = 10;
+    [SerializeField] private Slider gainSlider;
     
     [Header("Debug")]
     [SerializeField] private bool showDebug = true;
+    [SerializeField] private TextMeshProUGUI gainValue;
 
     private AudioClip micClip;
     private int lastPosition = 0;
+    private float volume_multiplier = 1f;
 
     private void Start()
     {
-        CheckMicrophonePermissions();
+        gainSlider.onValueChanged.AddListener(OnGainChanged);
+
+#if UNITY_ANDROID && !UNITY_EDITOR
+        RequestMicrophonePermission();
+#else
+        InitializeMicrophone();
+#endif
+    }
+
+#if UNITY_ANDROID && !UNITY_EDITOR
+    private void RequestMicrophonePermission()
+    {
+        if (UnityEngine.Android.Permission.HasUserAuthorizedPermission(UnityEngine.Android.Permission.Microphone))
+        {
+            // Permission already granted — initialize immediately
+            InitializeMicrophone();
+            return;
+        }
+
+        // Build callbacks so we only initialize after the user grants access
+        var callbacks = new UnityEngine.Android.PermissionCallbacks();
+        callbacks.PermissionGranted += OnMicPermissionGranted;
+        callbacks.PermissionDenied += OnMicPermissionDenied;
+        callbacks.PermissionDeniedAndDontAskAgain += OnMicPermissionDenied;
+
+        UnityEngine.Android.Permission.RequestUserPermission(
+            UnityEngine.Android.Permission.Microphone, callbacks);
+    }
+
+    private void OnMicPermissionGranted(string permissionName)
+    {
+        Debug.Log("[AudioManager] Microphone permission granted.");
         InitializeMicrophone();
     }
 
-    private void CheckMicrophonePermissions()
+    private void OnMicPermissionDenied(string permissionName)
     {
-#if UNITY_ANDROID && !UNITY_EDITOR
-        if (!UnityEngine.Android.Permission.HasUserAuthorizedPermission(UnityEngine.Android.Permission.Microphone))
-        {
-            UnityEngine.Android.Permission.RequestUserPermission(UnityEngine.Android.Permission.Microphone);
-        }
-#endif
+        Debug.LogError("[AudioManager] Microphone permission denied. Audio capture will not work.");
     }
+#endif
 
     private void InitializeMicrophone()
     {
@@ -69,7 +102,7 @@ public class AudioManager : MonoBehaviour
         if (length < 0) length += micClip.samples; // Adjust length if wrap-around (loop) occurs
 
         // 3. Optimization: Wait until at least 0.1 seconds of audio (1600 samples) is collected
-        if (length == 0 || length < 1600) return;
+        if (length == 0 || length < 4800) return;
 
         float[] samples = new float[length];
 
@@ -113,9 +146,9 @@ public class AudioManager : MonoBehaviour
         webSocketManager.SendAudioData(pcmBytes); 
     }
 
-    private void DebugAudioLevel(float[] samples)
+    private float GetDecibel(float[] samples)
     {
-        if (samples.Length == 0) return;
+        if (samples.Length == 0) return -120;
 
         float sum = 0f;
         for (int i = 0; i < samples.Length; i++)
@@ -129,6 +162,13 @@ public class AudioManager : MonoBehaviour
         // Convert to decibels (-60dB to 0dB)
         float db = 20 * Mathf.Log10(rms > 0 ? rms : 0.0001f); 
 
+        return db;
+    }
+
+    private void DebugAudioLevel(float[] samples)
+    {
+        float db = GetDecibel(samples);
+
         // Filter out silence (below -60dB)
         if (db < -60f) return;
 
@@ -141,13 +181,23 @@ public class AudioManager : MonoBehaviour
 
     private byte[] ConvertToPcm16(float[] samples) 
     {
+        // float db = GetDecibel(samples);
+
+        // if (db < -45f) 
+        // {
+        //     // Array.Clear(samples, 0, samples.Length); 
+        //     for (int i = 0; i < samples.Length; i++)
+        //     {
+        //         samples[i] *= 0.01f; 
+        //     }
+        // }
+
         byte[] pcmData = new byte[samples.Length * 2];
         for (int i = 0; i < samples.Length; i++) 
         {
-            short shortSample = (short)(Mathf.Clamp(samples[i], -1f, 1f) * 32767);
-            byte[] byteSample = BitConverter.GetBytes(shortSample);
-            pcmData[i * 2] = byteSample[0];
-            pcmData[i * 2 + 1] = byteSample[1];
+            short shortSample = (short)(Mathf.Clamp(samples[i]*volume_multiplier, -1f, 1f) * 32767);
+            pcmData[i * 2] = (byte)(shortSample & 0xFF);
+            pcmData[i * 2 + 1] = (byte)((shortSample >> 8) & 0xFF);
         }
         return pcmData;
     }
@@ -158,5 +208,10 @@ public class AudioManager : MonoBehaviour
         {
             Microphone.End(null); // Release microphone resource on exit
         }
+    }
+
+    public void OnGainChanged(float value){
+        volume_multiplier = value;
+        gainValue.text = volume_multiplier.ToString("F2");
     }
 }
